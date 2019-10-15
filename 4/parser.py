@@ -10,21 +10,31 @@ def get(link):
     response_inner = requests.get(link)
     if response_inner.status_code == 200:
         tree_inner = lxml.html.fromstring(response_inner.text)
-        len_of_table = len(tree.xpath('//table[@style="width:100%;border-color:#000000"]/'
-                                      '/nobr[contains(text(), "УИК")]//text()'))
-        table = np.array(tree_inner.xpath('//table[@style="width:100%;border-color:#000000"]//td[@width="90%"]//tr/'
-                                          '/nobr//text()'))
-        table.reshape((15, len_of_table))
-        return np.concatenate((np.array([tree.xpath('//td[contains(text(), "Территориальная '
-                                                    'избирательная комиссия")]/text()')
-                                         for _ in range(len_of_table)]), table), axis=1)
+        if len(tree_inner.xpath('//td[contains(text(), "Цифровые избирательные участки")]')) == 0:
+            len_of_table = len(tree_inner.xpath('//table[@style="width:100%;border-color:#000000"]/'
+                                                '/nobr[contains(text(), "УИК")]//text()'))
+            table = np.array(tree_inner.xpath('//table[@style="width:100%;border-color:#000000"]//td[@width="90%"]//tr/'
+                                              '/nobr//text()'))
+            return np.concatenate((np.array([tree_inner.xpath('//td[contains(text(), "Территориальная '
+                                                              'избирательная комиссия")]/text()')
+                                             for _ in range(len_of_table)]), table.reshape((15, len_of_table)).T),
+                                  axis=1)
+        else:
+            table = np.array(tree_inner.xpath('//table[@bgcolor="#ffffff"]//td[@align="right"]/b/text()'))
+            return np.concatenate((np.array(["Цифровые избирательные участки", "Цифровые избирательные участки"]).
+                                   reshape((1, 2)), table.reshape((14, 1)).T),
+                                  axis=1)
     else:
         raise RuntimeError('status code is ' + str(response_inner.status_code) + ' in link ' + link)
 
 
 def save(table):
-    sqlite3.connect('collection.db')
-
+    conn = sqlite3.connect('collection.db')
+    cursor = conn.cursor()
+    for line in table[:]:
+        cursor.execute('INSERT into inp values ("' + line[0] + '","' + line[1] + '",' + ','.join(line[2:]) + ')')
+    conn.commit()
+    conn.close()
 
 
 if __name__ == '__main__':
@@ -34,7 +44,12 @@ if __name__ == '__main__':
     if response.status_code == 200:
         tree = lxml.html.fromstring(response.text)
         objects = tree.xpath('//tr[@bgcolor="#FFFFFF"]//a/@href')
+        res = None
         for object_ in objects:
-            get(object_)
+            if res is None:
+                res = get(object_)
+            else:
+                res = np.concatenate((res, get(object_)), axis=0)
+        save(res)
     else:
         raise RuntimeError('status code is ' + str(response.status_code))
